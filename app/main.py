@@ -7,7 +7,6 @@ import logging
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
-from functools import lru_cache
 from typing import Tuple
 from urllib.parse import urlparse
 
@@ -170,7 +169,6 @@ def _fetch_metadata_service_account_email() -> str | None:
     return None
 
 
-@lru_cache(maxsize=1)
 def _get_signing_identity() -> Tuple[str | None, str | None]:
     email = settings.signing_service_account
     access_token: str | None = None
