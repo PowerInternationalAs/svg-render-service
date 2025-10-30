@@ -12,6 +12,7 @@ from typing import Tuple
 from urllib.parse import urlparse
 
 import requests
+from google.auth.transport.requests import Request as GoogleAuthRequest
 from cairosvg import svg2png
 from cairosvg.parser import Tree
 from flask import Flask, jsonify, request
@@ -146,21 +147,11 @@ def _extract_svg_dimensions(tree: Tree) -> Tuple[float, float]:
     return width, height
 
 
-@lru_cache(maxsize=1)
-def _get_signing_service_account_email() -> str | None:
-    if settings.signing_service_account:
-        return settings.signing_service_account
-
-    credentials = getattr(storage_client, "_credentials", None)
-    if credentials is not None:
-        email = getattr(credentials, "service_account_email", None)
-        if email:
-            return email
-        email = getattr(credentials, "_service_account_email", None)
-        if email:
-            return email
-
-    metadata_url = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email"
+def _fetch_metadata_service_account_email() -> str | None:
+    metadata_url = (
+        "http://metadata.google.internal/computeMetadata/v1/"
+        "instance/service-accounts/default/email"
+    )
     try:
         response = requests.get(
             metadata_url,
@@ -175,6 +166,32 @@ def _get_signing_service_account_email() -> str | None:
         return None
 
     return None
+
+
+@lru_cache(maxsize=1)
+def _get_signing_identity() -> Tuple[str | None, str | None]:
+    email = settings.signing_service_account
+    access_token: str | None = None
+
+    credentials = getattr(storage_client, "_credentials", None)
+    if credentials is not None:
+        if not getattr(credentials, "valid", False):
+            try:
+                credentials.refresh(GoogleAuthRequest())
+            except Exception:  # pragma: no cover - best effort
+                pass
+
+        access_token = getattr(credentials, "token", None)
+
+        if not email:
+            email = getattr(credentials, "service_account_email", None)
+            if not email:
+                email = getattr(credentials, "_service_account_email", None)
+
+    if not email:
+        email = _fetch_metadata_service_account_email()
+
+    return email, access_token
 
 
 def _convert_svg_to_png(svg_bytes: bytes) -> Tuple[bytes, int, int]:
@@ -201,7 +218,7 @@ def _upload_png(png_bytes: bytes) -> Tuple[str, str]:
     blob.upload_from_string(png_bytes, content_type="image/png")
 
     expiration = timedelta(seconds=settings.signed_url_ttl_seconds)
-    signer_email = _get_signing_service_account_email()
+    signer_email, access_token = _get_signing_identity()
     signed_url_kwargs = {
         "version": "v4",
         "expiration": expiration,
@@ -209,6 +226,8 @@ def _upload_png(png_bytes: bytes) -> Tuple[str, str]:
     }
     if signer_email:
         signed_url_kwargs["service_account_email"] = signer_email
+    if access_token:
+        signed_url_kwargs["access_token"] = access_token
 
     signed_url = blob.generate_signed_url(**signed_url_kwargs)
 
