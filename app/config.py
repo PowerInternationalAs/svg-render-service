@@ -24,6 +24,7 @@ class Settings:
 
     bucket_name: str = os.environ.get("BUCKET_NAME", "svg-render-service")
     api_key: Optional[str] = os.environ.get("API_KEY")
+    signing_service_account: Optional[str] = os.environ.get("SIGNING_SERVICE_ACCOUNT")
 
     request_timeout_seconds: int = _get_int_from_env("SVG_FETCH_TIMEOUT_SECONDS", 10)
     max_svg_bytes: int = _get_int_from_env("MAX_SVG_BYTES", 5 * 1024 * 1024)
@@ -41,4 +42,3 @@ def get_settings() -> Settings:
     """Return cached settings instance."""
 
     return Settings()
-

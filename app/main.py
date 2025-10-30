@@ -7,6 +7,7 @@ import logging
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from typing import Tuple
 from urllib.parse import urlparse
 
@@ -145,6 +146,37 @@ def _extract_svg_dimensions(tree: Tree) -> Tuple[float, float]:
     return width, height
 
 
+@lru_cache(maxsize=1)
+def _get_signing_service_account_email() -> str | None:
+    if settings.signing_service_account:
+        return settings.signing_service_account
+
+    credentials = getattr(storage_client, "_credentials", None)
+    if credentials is not None:
+        email = getattr(credentials, "service_account_email", None)
+        if email:
+            return email
+        email = getattr(credentials, "_service_account_email", None)
+        if email:
+            return email
+
+    metadata_url = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email"
+    try:
+        response = requests.get(
+            metadata_url,
+            headers={"Metadata-Flavor": "Google"},
+            timeout=0.5,
+        )
+        if response.ok:
+            metadata_email = response.text.strip()
+            if metadata_email:
+                return metadata_email
+    except requests.RequestException:
+        return None
+
+    return None
+
+
 def _convert_svg_to_png(svg_bytes: bytes) -> Tuple[bytes, int, int]:
     tree = Tree(bytestring=svg_bytes)
 
@@ -169,11 +201,16 @@ def _upload_png(png_bytes: bytes) -> Tuple[str, str]:
     blob.upload_from_string(png_bytes, content_type="image/png")
 
     expiration = timedelta(seconds=settings.signed_url_ttl_seconds)
-    signed_url = blob.generate_signed_url(
-        version="v4",
-        expiration=expiration,
-        method="GET",
-    )
+    signer_email = _get_signing_service_account_email()
+    signed_url_kwargs = {
+        "version": "v4",
+        "expiration": expiration,
+        "method": "GET",
+    }
+    if signer_email:
+        signed_url_kwargs["service_account_email"] = signer_email
+
+    signed_url = blob.generate_signed_url(**signed_url_kwargs)
 
     return blob_name, signed_url
 
