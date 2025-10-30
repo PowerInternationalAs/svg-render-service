@@ -11,8 +11,10 @@ from functools import lru_cache
 from typing import Tuple
 from urllib.parse import urlparse
 
+import google.auth
 import requests
 from google.auth.transport.requests import Request as GoogleAuthRequest
+from google.auth.credentials import with_scopes_if_required
 from cairosvg import svg2png
 from cairosvg.parser import Tree
 from flask import Flask, jsonify, request
@@ -173,7 +175,19 @@ def _get_signing_identity() -> Tuple[str | None, str | None]:
     email = settings.signing_service_account
     access_token: str | None = None
 
-    credentials = getattr(storage_client, "_credentials", None)
+    try:
+        credentials, _ = google.auth.default()
+    except Exception:
+        credentials = None
+
+    if credentials is not None:
+        try:
+            credentials = with_scopes_if_required(
+                credentials, ("https://www.googleapis.com/auth/cloud-platform",)
+            )
+        except Exception:
+            pass
+
     if credentials is not None:
         if not getattr(credentials, "valid", False):
             try:
