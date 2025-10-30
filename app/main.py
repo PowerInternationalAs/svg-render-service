@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Tuple
@@ -32,6 +33,16 @@ storage_client = storage.Client()
 API_KEY_HEADER = "X-API-Key"
 OBJECT_PREFIX = "renders"
 
+_SVG_UNIT_TO_PX = {
+    "": 1.0,
+    "px": 1.0,
+    "pt": 96 / 72,  # CSS points
+    "pc": 16.0,
+    "mm": 96 / 25.4,
+    "cm": 96 / 2.54,
+    "in": 96.0,
+}
+_LENGTH_RE = re.compile(r"^\s*([-+]?\d*\.?\d+)")
 
 app = Flask(__name__)
 
@@ -97,16 +108,47 @@ def _compute_scale(width: float, height: float) -> Tuple[int, int]:
     return scaled_width, scaled_height
 
 
+def _parse_svg_length(raw_value: str | None) -> float:
+    if not raw_value:
+        return 0.0
+
+    match = _LENGTH_RE.match(raw_value)
+    if not match:
+        return 0.0
+
+    value = float(match.group(1))
+    unit = raw_value[match.end():].strip().lower()
+
+    if unit.endswith("%"):
+        return 0.0
+
+    if unit in _SVG_UNIT_TO_PX:
+        return value * _SVG_UNIT_TO_PX[unit]
+
+    return value
+
+
+def _extract_svg_dimensions(tree: Tree) -> Tuple[float, float]:
+    width = _parse_svg_length(tree.get("width"))
+    height = _parse_svg_length(tree.get("height"))
+
+    view_box = tree.get("viewBox")
+    if view_box:
+        components = [part for part in re.split(r"[\s,]+", view_box.strip()) if part]
+        if len(components) == 4:
+            _, _, viewbox_width, viewbox_height = components
+            if width <= 0:
+                width = _parse_svg_length(viewbox_width)
+            if height <= 0:
+                height = _parse_svg_length(viewbox_height)
+
+    return width, height
+
+
 def _convert_svg_to_png(svg_bytes: bytes) -> Tuple[bytes, int, int]:
     tree = Tree(bytestring=svg_bytes)
 
-    width = float(tree.width or 0)
-    height = float(tree.height or 0)
-
-    if (width <= 0 or height <= 0) and tree.view_box:
-        _, _, viewbox_width, viewbox_height = tree.view_box
-        width = float(viewbox_width)
-        height = float(viewbox_height)
+    width, height = _extract_svg_dimensions(tree)
 
     target_width, target_height = _compute_scale(width, height)
 
@@ -198,4 +240,3 @@ def health_check() -> tuple:
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
-
