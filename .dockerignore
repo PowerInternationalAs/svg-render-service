@@ -1,0 +1,15 @@
+.git
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+build/
+dist/
+pip-wheel-metadata/
+.mypy_cache/
+.pytest_cache/
+node_modules/
